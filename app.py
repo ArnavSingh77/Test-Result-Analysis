@@ -7,8 +7,10 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 
 def load_data(file):
-    if file.name.endswith(('.xlsx', '.xls')):
-        df = pd.read_excel(file, header=None)
+    if file.name.endswith('.xlsx'):
+        df = pd.read_excel(file, engine='openpyxl', header=None)
+    elif file.name.endswith('.xls'):
+        df = pd.read_excel(file, engine='xlrd', header=None)
     elif file.name.endswith('.csv'):
         df = pd.read_csv(file, header=None)
     else:
