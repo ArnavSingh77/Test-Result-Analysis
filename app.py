@@ -4,7 +4,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import seaborn as sns
 import matplotlib.pyplot as plt
-from io import BytesIO
 
 def load_data(file):
     if file.name.endswith('.xlsx'):
