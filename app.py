@@ -1,12 +1,19 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import seaborn as sns
 import matplotlib.pyplot as plt
+import numpy as np
+from datetime import datetime
+from io import BytesIO
 
+@st.cache_data
 def load_data(file, config):
     try:
+        if file.size > 10 * 1024 * 1024:
+            st.error("File is too large. Please upload a file smaller than 10MB.")
+            return None
+
         # Read file based on extension
         if file.name.endswith('.xlsx'):
             df = pd.read_excel(file, engine='openpyxl', header=None)
@@ -18,7 +25,6 @@ def load_data(file, config):
             st.error("Unsupported file format. Please upload an Excel (.xlsx or .xls) or CSV (.csv) file.")
             return None
         
-        # Find the header row using the identifier column
         header_row = None
         for idx, row in df.iterrows():
             if row.astype(str).str.contains(config['identifier_column'], case=False).any():
@@ -29,14 +35,11 @@ def load_data(file, config):
             st.error(f"Could not find a header row containing {config['identifier_column']}. Please check the file format.")
             return None
         
-        # Set the header and remove unnecessary rows
         df.columns = df.iloc[header_row]
         df = df.iloc[header_row + 1:].reset_index(drop=True)
         
-        # Rename columns for consistency
         df = df.rename(columns=lambda x: str(x).strip())
         
-        # Get columns based on configuration
         columns_to_keep = [
             config['rank_column'],
             config['identifier_column']
@@ -48,21 +51,18 @@ def load_data(file, config):
             st.error(f"Could not find column: {e}. Please check your column configurations.")
             return None
         
-        # Rename columns to standard names
         column_mapping = {
             config['rank_column']: 'Rank',
             config['identifier_column']: 'Identifier',
             config['total_column']: 'Total'
         }
         
-        # Add subject mappings
         column_mapping.update({
             old: new for old, new in zip(config['subject_columns'], config['subject_names'])
         })
         
         df = df.rename(columns=column_mapping)
         
-        # Ensure numeric columns are properly typed
         numeric_cols = ['Rank'] + config['subject_names'] + ['Total']
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -75,20 +75,15 @@ def load_data(file, config):
 def main():
     st.title("Test Result Analysis App")
     
-    # Configuration sidebar
     with st.sidebar:
-        st.header("Configuration")
+        st.header("Test Details")
         
-        # Test name
         test_name = st.text_input("Test Name", "Examination")
-        
-        # Column configurations
         st.subheader("Column Settings")
-        identifier_column = st.text_input("Identifier Column Name (e.g., Roll No, Enrollment)", "Enrollment")
-        rank_column = st.text_input("Rank Column Name", "Rank")
+        identifier_column = st.text_input("Identifier Column Name (e.g., Roll No, Enrollment)", "Enrol. No.")
+        rank_column = st.text_input("Rank Column Name", "S. No.")
         total_column = st.text_input("Total Marks Column Name", "Total")
         
-        # Subject configuration
         st.subheader("Subject Settings")
         num_subjects = st.number_input("Number of Subjects", min_value=1, max_value=10, value=3)
         
@@ -103,7 +98,6 @@ def main():
                 subject_name = st.text_input(f"Subject {i+1} Display Name", f"Subject {i+1}")
                 subject_names.append(subject_name)
     
-    # Create configuration dictionary
     config = {
         'test_name': test_name,
         'identifier_column': identifier_column,
@@ -113,7 +107,6 @@ def main():
         'subject_names': subject_names
     }
 
-    # File upload
     uploaded_file = st.file_uploader("Upload your Excel or CSV file", type=["xlsx", "xls", "csv"])
     
     if uploaded_file is not None:
@@ -123,11 +116,26 @@ def main():
             st.subheader("Data Preview")
             st.dataframe(df.head())
 
-            # Input identifier
+            # Ask user if they want to remove specific columns/rows
+            if st.checkbox("Would you like to remove specific columns/rows?"):
+                columns_to_remove = st.multiselect("Select columns to remove from analysis", df.columns.tolist())
+                if columns_to_remove:
+                    df = df.drop(columns=columns_to_remove)
+                    st.success(f"Removed columns: {', '.join(columns_to_remove)}")
+                
+                rows_to_remove = st.text_area("Enter rows to remove by Identifier (comma-separated)")
+                if rows_to_remove:
+                    identifiers_to_remove = [x.strip() for x in rows_to_remove.split(",")]
+                    df = df[~df['Identifier'].isin(identifiers_to_remove)]
+                    st.success(f"Removed rows with Identifiers: {', '.join(identifiers_to_remove)}")
+
+                # Update the data preview after column/row removal
+                st.subheader("Updated Data Preview")
+                st.dataframe(df.head())
+
             identifier = st.text_input(f"Enter your {identifier_column}:")
             
             if identifier:
-                # Filter data for the specific student
                 student_data = df[df['Identifier'].astype(str) == identifier]
                 
                 if not student_data.empty:
@@ -139,7 +147,6 @@ def main():
                     
                     st.write(f"Your Rank: {rank} out of {total_students}")
 
-                    # Overall performance gauge
                     student_total = student_data['Total'].values[0]
                     class_average = df['Total'].mean()
                     max_total = df['Total'].max()
@@ -152,8 +159,8 @@ def main():
                         gauge={
                             'axis': {'range': [0, max_total]},
                             'steps': [
-                                {'range': [0, class_average], 'color': "lightgray"},
-                                {'range': [class_average, max_total], 'color': "gray"}],
+                                {'range': [0, class_average], 'color': "lightblue"},
+                                {'range': [class_average, max_total], 'color': "lightgreen"}],
                             'threshold': {
                                 'line': {'color': "red", 'width': 4},
                                 'thickness': 0.75,
@@ -164,20 +171,13 @@ def main():
                     st.write(f"Your total score: {student_total}")
                     st.write(f"Class average score: {class_average:.2f}")
 
-                    # Subject-wise comparison
                     st.subheader("Subject-wise Comparison")
                     for subject in config['subject_names'] + ['Total']:
                         plt.figure(figsize=(10, 6))
                         
-                        # Create a violin plot
-                        sns.violinplot(x=subject, data=df, inner='quartile', color='skyblue')
-                        
-                        # Add student's score
+                        sns.violinplot(x=subject, data=df, inner='quartile', palette='muted')
                         plt.axvline(student_data[subject].values[0], color='red', linestyle='--', label='Your Score')
-                        
-                        # Add average score
-                        average_score = df[subject].mean()
-                        plt.axvline(average_score, color='green', linestyle=':', label='Average Score')
+                        plt.axvline(df[subject].mean(), color='green', linestyle=':', label='Average Score')
                         
                         plt.title(f"Distribution of {subject} Marks", fontsize=16)
                         plt.xlabel(f"{subject} Marks", fontsize=14)
@@ -187,7 +187,6 @@ def main():
                         st.pyplot(plt)
                         plt.clf()
                     
-                    # Percentile calculation
                     percentile = (1 - (rank - 1) / total_students) * 100
                     
                     st.subheader("Performance Summary")
