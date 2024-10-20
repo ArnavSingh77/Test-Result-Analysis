@@ -5,76 +5,130 @@ import plotly.graph_objects as go
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-def load_data(file):
-    if file.name.endswith('.xlsx'):
-        df = pd.read_excel(file, engine='openpyxl', header=None)
-    elif file.name.endswith('.xls'):
-        df = pd.read_excel(file, engine='xlrd', header=None)
-    elif file.name.endswith('.csv'):
-        df = pd.read_csv(file, header=None)
-    else:
-        st.error("Unsupported file format. Please upload an Excel (.xlsx or .xls) or CSV (.csv) file.")
+def load_data(file, config):
+    try:
+        # Read file based on extension
+        if file.name.endswith('.xlsx'):
+            df = pd.read_excel(file, engine='openpyxl', header=None)
+        elif file.name.endswith('.xls'):
+            df = pd.read_excel(file, engine='xlrd', header=None)
+        elif file.name.endswith('.csv'):
+            df = pd.read_csv(file, header=None)
+        else:
+            st.error("Unsupported file format. Please upload an Excel (.xlsx or .xls) or CSV (.csv) file.")
+            return None
+        
+        # Find the header row using the identifier column
+        header_row = None
+        for idx, row in df.iterrows():
+            if row.astype(str).str.contains(config['identifier_column'], case=False).any():
+                header_row = idx
+                break
+        
+        if header_row is None:
+            st.error(f"Could not find a header row containing {config['identifier_column']}. Please check the file format.")
+            return None
+        
+        # Set the header and remove unnecessary rows
+        df.columns = df.iloc[header_row]
+        df = df.iloc[header_row + 1:].reset_index(drop=True)
+        
+        # Rename columns for consistency
+        df = df.rename(columns=lambda x: str(x).strip())
+        
+        # Get columns based on configuration
+        columns_to_keep = [
+            config['rank_column'],
+            config['identifier_column']
+        ] + config['subject_columns'] + [config['total_column']]
+        
+        try:
+            df = df[columns_to_keep]
+        except KeyError as e:
+            st.error(f"Could not find column: {e}. Please check your column configurations.")
+            return None
+        
+        # Rename columns to standard names
+        column_mapping = {
+            config['rank_column']: 'Rank',
+            config['identifier_column']: 'Identifier',
+            config['total_column']: 'Total'
+        }
+        
+        # Add subject mappings
+        column_mapping.update({
+            old: new for old, new in zip(config['subject_columns'], config['subject_names'])
+        })
+        
+        df = df.rename(columns=column_mapping)
+        
+        # Ensure numeric columns are properly typed
+        numeric_cols = ['Rank'] + config['subject_names'] + ['Total']
+        for col in numeric_cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        return df
+    except Exception as e:
+        st.error(f"Error processing file: {str(e)}")
         return None
-    
-    # Find the row with column headers
-    header_row = None
-    for idx, row in df.iterrows():
-        if row.astype(str).str.contains('Enrol|Roll', case=False).any():
-            header_row = idx
-            break
-    
-    if header_row is None:
-        st.error("Could not find a proper header row in the file. Please check the file format.")
-        return None
-    
-    # Set the header and remove unnecessary rows
-    df.columns = df.iloc[header_row]
-    df = df.iloc[header_row + 1:].reset_index(drop=True)
-    
-    # Rename columns for consistency
-    df = df.rename(columns=lambda x: x.strip())
-    
-    # Identify important columns
-    enrollment_col = next((col for col in df.columns if 'enrol' in col.lower() or 'roll' in col.lower()), None)
-    rank_col = next((col for col in df.columns if 'no' in col.lower() or 'rank' in col.lower()), None)
-    subject_cols = [col for col in df.columns if col.lower() in ['physics', 'chemistry', 'mathematics']]
-    total_col = next((col for col in df.columns if 'total' in col.lower()), None)
-    
-    if not all([enrollment_col, rank_col, len(subject_cols) == 3, total_col]):
-        st.error("Could not identify all required columns. Please check the file format.")
-        return None
-    
-    # Select and rename columns
-    columns_to_keep = [rank_col, enrollment_col] + subject_cols + [total_col]
-    df = df[columns_to_keep]
-    df.columns = ['Rank', 'Enrollment Number', 'Physics', 'Chemistry', 'Mathematics', 'Total']
-    
-    # Ensure numeric columns are properly typed
-    numeric_cols = ['Rank', 'Physics', 'Chemistry', 'Mathematics', 'Total']
-    for col in numeric_cols:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-    
-    return df
 
 def main():
-    st.title("FIITJEE Result Analysis App")
+    st.title("Test Result Analysis App")
+    
+    # Configuration sidebar
+    with st.sidebar:
+        st.header("Configuration")
+        
+        # Test name
+        test_name = st.text_input("Test Name", "Examination")
+        
+        # Column configurations
+        st.subheader("Column Settings")
+        identifier_column = st.text_input("Identifier Column Name (e.g., Roll No, Enrollment)", "Enrollment")
+        rank_column = st.text_input("Rank Column Name", "Rank")
+        total_column = st.text_input("Total Marks Column Name", "Total")
+        
+        # Subject configuration
+        st.subheader("Subject Settings")
+        num_subjects = st.number_input("Number of Subjects", min_value=1, max_value=10, value=3)
+        
+        subject_columns = []
+        subject_names = []
+        for i in range(num_subjects):
+            col1, col2 = st.columns(2)
+            with col1:
+                subject_col = st.text_input(f"Subject {i+1} Column Name", f"Subject{i+1}")
+                subject_columns.append(subject_col)
+            with col2:
+                subject_name = st.text_input(f"Subject {i+1} Display Name", f"Subject {i+1}")
+                subject_names.append(subject_name)
+    
+    # Create configuration dictionary
+    config = {
+        'test_name': test_name,
+        'identifier_column': identifier_column,
+        'rank_column': rank_column,
+        'total_column': total_column,
+        'subject_columns': subject_columns,
+        'subject_names': subject_names
+    }
 
     # File upload
     uploaded_file = st.file_uploader("Upload your Excel or CSV file", type=["xlsx", "xls", "csv"])
     
     if uploaded_file is not None:
-        df = load_data(uploaded_file)
+        df = load_data(uploaded_file, config)
         
         if df is not None:
             st.subheader("Data Preview")
             st.dataframe(df.head())
 
-            # Input enrollment number
-            enrollment_number = st.text_input("Enter your enrollment number:")
+            # Input identifier
+            identifier = st.text_input(f"Enter your {identifier_column}:")
             
-            if enrollment_number:
+            if identifier:
                 # Filter data for the specific student
-                student_data = df[df['Enrollment Number'].astype(str) == enrollment_number]
+                student_data = df[df['Identifier'].astype(str) == identifier]
                 
                 if not student_data.empty:
                     st.subheader("Your Results")
@@ -88,8 +142,6 @@ def main():
                     # Overall performance gauge
                     student_total = student_data['Total'].values[0]
                     class_average = df['Total'].mean()
-                    
-                    # Calculate maximum score (highest marks of students)
                     max_total = df['Total'].max()
 
                     fig = go.Figure(go.Indicator(
@@ -112,42 +164,38 @@ def main():
                     st.write(f"Your total score: {student_total}")
                     st.write(f"Class average score: {class_average:.2f}")
 
-                    # Improved comparison with other students using Seaborn
-                    st.subheader("Comparison with Other Students")
-                    subjects = ['Physics', 'Chemistry', 'Mathematics', 'Total']
-
-                    for subject in subjects:
+                    # Subject-wise comparison
+                    st.subheader("Subject-wise Comparison")
+                    for subject in config['subject_names'] + ['Total']:
                         plt.figure(figsize=(10, 6))
                         
-                        # Create a violin plot to show distribution
+                        # Create a violin plot
                         sns.violinplot(x=subject, data=df, inner='quartile', color='skyblue')
                         
-                        # Add a line for the student's score
+                        # Add student's score
                         plt.axvline(student_data[subject].values[0], color='red', linestyle='--', label='Your Score')
                         
-                        # Add a line for the average score
+                        # Add average score
                         average_score = df[subject].mean()
                         plt.axvline(average_score, color='green', linestyle=':', label='Average Score')
                         
-                        # Adding labels and title
                         plt.title(f"Distribution of {subject} Marks", fontsize=16)
                         plt.xlabel(f"{subject} Marks", fontsize=14)
                         plt.ylabel("Density", fontsize=14)
                         plt.legend()
                         
-                        # Display the plot
                         st.pyplot(plt)
-                        plt.clf()  # Clear the figure for the next plot
+                        plt.clf()
                     
                     # Percentile calculation
                     percentile = (1 - (rank - 1) / total_students) * 100
                     
-                    st.subheader("Your Performance Summary")
+                    st.subheader("Performance Summary")
                     st.write(f"Rank: {rank}")
                     st.write(f"Percentile: {percentile:.2f}%")
 
                 else:
-                    st.error("Enrollment number not found in the data.")
+                    st.error(f"{identifier_column} not found in the data.")
 
 if __name__ == "__main__":
     main()
