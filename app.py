@@ -144,32 +144,46 @@ def main():
     
     with st.sidebar:
         st.header("Test Details")
-        
+    
         test_name = st.text_input("Test Name", "Examination")
         st.subheader("Column Settings")
         identifier_column = st.text_input("Identifier Column Name (e.g., Roll No, Enrollment)", "Enrol. No.")
         rank_column = st.text_input("Rank Column Name", "S. No.")
         total_column = st.text_input("Total Marks Column Name", "Total")
-        
+    
         st.subheader("Subject Settings")
         num_subjects = st.number_input("Number of Subjects", min_value=1, max_value=10, value=3)
-        
+    
         subject_columns = []
         subject_names = []
-        
+    
         for i in range(num_subjects):
-            subject_col = st.text_input(f"Subject {i+1} Column Name", f"Subject{i+1}")
+            col1, col2 = st.columns(2)
+            with col1:
+                # Prompt user for the subject column name
+                subject_col = st.text_input(f"Subject {i+1} Column Name", f"Subject{i+1}")
+        
+            with col2:
+                # Ask if the display name is the same
+                if st.checkbox(f"Is the display name the same as the column name for Subject {i+1}?", value=True):
+                # If yes, use the same input
+                  subject_name = subject_col  # Use the same name
+                else:
+                # If no, ask for the display name
+                    subject_name = st.text_input(f"Subject {i+1} Display Name", f"Subject {i+1}")
+        
             subject_columns.append(subject_col)
-            subject_names.append(subject_col)  # Use the same name for subject display
+            subject_names.append(subject_name)
 
     config = {
-        'test_name': test_name,
-        'identifier_column': identifier_column,
-        'rank_column': rank_column,
-        'total_column': total_column,
-        'subject_columns': subject_columns,
-        'subject_names': subject_names
-    }
+    'test_name': test_name,
+    'identifier_column': identifier_column,
+    'rank_column': rank_column,
+    'total_column': total_column,
+    'subject_columns': subject_columns,
+    'subject_names': subject_names
+}
+
 
     uploaded_file = st.file_uploader("Upload your Excel or CSV file", type=["xlsx", "xls", "csv"])
     
