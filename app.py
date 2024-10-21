@@ -5,7 +5,6 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 from datetime import datetime
-from io import BytesIO
 
 @st.cache_data
 def load_data(file, config):
@@ -72,8 +71,67 @@ def load_data(file, config):
         st.error(f"Error processing file: {str(e)}")
         return None
 
+def create_radar_chart(df, student_ids, subject_cols):
+    """Create a radar chart comparing multiple students"""
+    fig = go.Figure()
+    
+    for student_id in student_ids:
+        student_data = df[df['Identifier'].astype(str) == student_id]
+        if not student_data.empty:
+            values = student_data[subject_cols].values[0].tolist()
+            values.append(values[0])  # Complete the polygon
+            
+            fig.add_trace(go.Scatterpolar(
+                r=values,
+                theta=subject_cols + [subject_cols[0]],
+                name=f"Student {student_id}",
+                fill='toself'
+            ))
+    
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, df[subject_cols].max().max()]
+            )),
+        showlegend=True
+    )
+    
+    return fig
+
+def display_achievements(student_data, df):
+    """Display achievement badges based on performance"""
+    achievements = []
+    
+    # Top 10% Achievement
+    percentile = (1 - (student_data['Rank'].values[0] - 1) / len(df)) * 100
+    if percentile >= 90:
+        achievements.append("🏆 Top 10% Performer!")
+    
+    # Subject Toppers
+    for subject in df.columns[df.columns.str.startswith('Subject')]:
+        if student_data[subject].values[0] >= df[subject].max() * 0.95:
+            achievements.append(f"🌟 Excellence in {subject}!")
+    
+    # Overall Score Achievement
+    if student_data['Total'].values[0] >= df['Total'].max() * 0.9:
+        achievements.append("🎯 Outstanding Overall Performance!")
+    
+    return achievements
+
 def main():
     st.title("Test Result Analysis App")
+    
+    # Instructions on how to use the app
+    st.markdown("""
+    ### Instructions
+    1. **Upload Your Data:** Use the file uploader to upload an Excel or CSV file containing test results.
+    2. **Configure Columns:** Enter the names of the columns that represent identifiers (e.g., Roll No), ranks, total scores, and subjects in the sidebar.
+    3. **View Data:** After uploading, preview the data. You can remove any unwanted columns or rows if necessary.
+    4. **Analyze Performance:** Enter your identifier to see your results and achievements.
+    5. **Compare Peers:** Select other identifiers to compare your performance with peers visually.
+    6. **Explore Insights:** Check out the distribution of scores and subject toppers to see where you stand.
+    """)
     
     with st.sidebar:
         st.header("Test Details")
@@ -116,7 +174,7 @@ def main():
             st.subheader("Data Preview")
             st.dataframe(df.head())
 
-            # Ask user if they want to remove specific columns/rows
+            # Column and Row Removal Feature
             if st.checkbox("Would you like to remove specific columns/rows?"):
                 columns_to_remove = st.multiselect("Select columns to remove from analysis", df.columns.tolist())
                 if columns_to_remove:
@@ -133,12 +191,26 @@ def main():
                 st.subheader("Updated Data Preview")
                 st.dataframe(df.head())
 
+            # Top Performers List
+            st.subheader("Top Performers")
+            top_10 = df.nsmallest(10, 'Rank')[['Rank', 'Identifier', 'Total'] + config['subject_names']]
+            st.dataframe(top_10, use_container_width=True)
+
+            # Individual Analysis
+            st.subheader("Individual Analysis")
             identifier = st.text_input(f"Enter your {identifier_column}:")
             
             if identifier:
                 student_data = df[df['Identifier'].astype(str) == identifier]
                 
                 if not student_data.empty:
+                    # Achievements
+                    achievements = display_achievements(student_data, df)
+                    if achievements:
+                        for achievement in achievements:
+                            st.markdown(f"### {achievement}")
+
+                    # Basic Results
                     st.subheader("Your Results")
                     st.dataframe(student_data)
                     
@@ -147,6 +219,7 @@ def main():
                     
                     st.write(f"Your Rank: {rank} out of {total_students}")
 
+                    # Score Gauge
                     student_total = student_data['Total'].values[0]
                     class_average = df['Total'].mean()
                     max_total = df['Total'].max()
@@ -168,13 +241,37 @@ def main():
 
                     st.plotly_chart(fig)
 
-                    st.write(f"Your total score: {student_total}")
-                    st.write(f"Class average score: {class_average:.2f}")
+                    # Detailed Performance Metrics - Moved Below "Your Results"
+                    percentile = (1 - (rank - 1) / total_students) * 100
+                    st.subheader("Detailed Performance Metrics")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Percentile", f"{percentile:.2f}%")
+                    with col2:
+                        st.metric("Total Score", f"{student_total}")
+                    with col3:
+                        st.metric("Class Average", f"{class_average:.2f}")
 
-                    st.subheader("Subject-wise Comparison")
+                    # Peer Comparison
+                    st.subheader("Compare with Peers")
+                    peer_ids = st.multiselect(
+                        "Select peers to compare with",
+                        df['Identifier'].unique(),
+                    )
+                    
+                    if peer_ids:
+                        comparison_ids = [identifier] + peer_ids
+                        comparison_data = df[df['Identifier'].astype(str).isin(comparison_ids)]
+                        
+                        # Radar Chart Comparison
+                        st.subheader("Subject-wise Peer-to-Peer Comparison")
+                        radar_fig = create_radar_chart(df, comparison_ids, config['subject_names'])
+                        st.plotly_chart(radar_fig)
+
+                    # Performance Distribution (Violin Plots)
+                    st.subheader("Subject-wise Performance Distribution")
                     for subject in config['subject_names'] + ['Total']:
                         plt.figure(figsize=(10, 6))
-                        
                         sns.violinplot(x=subject, data=df, inner='quartile', palette='muted')
                         plt.axvline(student_data[subject].values[0], color='red', linestyle='--', label='Your Score')
                         plt.axvline(df[subject].mean(), color='green', linestyle=':', label='Average Score')
@@ -186,15 +283,18 @@ def main():
                         
                         st.pyplot(plt)
                         plt.clf()
-                    
-                    percentile = (1 - (rank - 1) / total_students) * 100
-                    
-                    st.subheader("Performance Summary")
-                    st.write(f"Rank: {rank}")
-                    st.write(f"Percentile: {percentile:.2f}%")
 
                 else:
                     st.error(f"{identifier_column} not found in the data.")
+
+            # Leaderboard View
+            st.subheader("🏆 Subject-wise Toppers")
+            for subject in config['subject_names']:
+                st.subheader(f"Top 5 in {subject}")
+                st.dataframe(
+                    df.nlargest(5, subject)[['Rank', 'Identifier', subject]],
+                    use_container_width=True
+                )
 
 if __name__ == "__main__":
     main()
