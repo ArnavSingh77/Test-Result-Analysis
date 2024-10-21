@@ -24,6 +24,7 @@ def load_data(file, config):
             st.error("Unsupported file format. Please upload an Excel (.xlsx or .xls) or CSV (.csv) file.")
             return None
         
+        # Locate the header row
         header_row = None
         for idx, row in df.iterrows():
             if row.astype(str).str.contains(config['identifier_column'], case=False).any():
@@ -34,15 +35,20 @@ def load_data(file, config):
             st.error(f"Could not find a header row containing {config['identifier_column']}. Please check the file format.")
             return None
         
+        # Set the DataFrame columns and remove the header row from the DataFrame
         df.columns = df.iloc[header_row]
         df = df.iloc[header_row + 1:].reset_index(drop=True)
         
-        df = df.rename(columns=lambda x: str(x).strip())
+        # Clean column names
+        df.columns = df.columns.str.strip()
         
+        # Select relevant columns based on user configuration
         columns_to_keep = [
             config['rank_column'],
-            config['identifier_column']
-        ] + config['subject_columns'] + [config['total_column']]
+            config['identifier_column'],
+            *config['subject_columns'],
+            config['total_column']
+        ]
         
         try:
             df = df[columns_to_keep]
@@ -50,19 +56,22 @@ def load_data(file, config):
             st.error(f"Could not find column: {e}. Please check your column configurations.")
             return None
         
+        # Create a mapping for renaming columns
         column_mapping = {
             config['rank_column']: 'Rank',
             config['identifier_column']: 'Identifier',
             config['total_column']: 'Total'
         }
         
-        column_mapping.update({
-            old: new for old, new in zip(config['subject_columns'], config['subject_names'])
-        })
-        
+        # Map subject columns to display names
+        for subject_col, subject_name in zip(config['subject_columns'], config['subject_names']):
+            column_mapping[subject_col] = subject_name
+            
+        # Rename columns based on the mapping
         df = df.rename(columns=column_mapping)
         
-        numeric_cols = ['Rank'] + config['subject_names'] + ['Total']
+        # Convert relevant columns to numeric
+        numeric_cols = ['Rank', 'Total'] + config['subject_names']
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce')
         
@@ -147,15 +156,12 @@ def main():
         
         subject_columns = []
         subject_names = []
+        
         for i in range(num_subjects):
-            col1, col2 = st.columns(2)
-            with col1:
-                subject_col = st.text_input(f"Subject {i+1} Column Name", f"Subject{i+1}")
-                subject_columns.append(subject_col)
-            with col2:
-                subject_name = st.text_input(f"Subject {i+1} Display Name", f"Subject {i+1}")
-                subject_names.append(subject_name)
-    
+            subject_col = st.text_input(f"Subject {i+1} Column Name", f"Subject{i+1}")
+            subject_columns.append(subject_col)
+            subject_names.append(subject_col)  # Use the same name for subject display
+
     config = {
         'test_name': test_name,
         'identifier_column': identifier_column,
@@ -171,8 +177,10 @@ def main():
         df = load_data(uploaded_file, config)
         
         if df is not None:
-            st.subheader("Data Preview")
-            st.dataframe(df.head())
+            # Initial data preview
+            data_preview_placeholder = st.empty()
+            data_preview_placeholder.subheader("Data Preview")
+            data_preview_placeholder.dataframe(df.head())
 
             # Column and Row Removal Feature
             if st.checkbox("Would you like to remove specific columns/rows?"):
@@ -188,8 +196,7 @@ def main():
                     st.success(f"Removed rows with Identifiers: {', '.join(identifiers_to_remove)}")
 
                 # Update the data preview after column/row removal
-                st.subheader("Updated Data Preview")
-                st.dataframe(df.head())
+                data_preview_placeholder.dataframe(df.head())
 
             # Top Performers List
             st.subheader("Top Performers")
